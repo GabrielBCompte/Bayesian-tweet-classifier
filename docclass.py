@@ -1,6 +1,7 @@
 import re
 import math
 from sqlite3 import dbapi2 as sqlite
+import csv
 
 
 class Classifier(object):
@@ -13,6 +14,14 @@ class Classifier(object):
         self.cc = dict()
         self.get_features = get_features
 
+    def loadData(self, ):
+        with open('asdf.csv') as algo:
+            entrada = csv.reader(algo)
+            for reg in entrada:
+                string, category =  reg[0].split(';')[1],  reg[0].split(';')[3]
+                category = 'positive' if category == '1' else 'negative'
+                self.train(string, category)
+
     def maketables(self):
         self.con.execute('create table words(word, negative, positive)')
         self.con.execute('create table categories(category, count)')
@@ -20,70 +29,47 @@ class Classifier(object):
 
     # Increase the count of a feature/category pair
     def incf(self, f, cat):
-        try:
-            self.con.execute("UPDATE words SET %s = %s + 1 WHERE word = %s" % (cat, cat, f))
-        except sqlite.OperationalError:
-            print("create")
+        query = self.con.execute("UPDATE words SET %s = %s + 1 WHERE word = '%s'" % (cat, cat, f))
+        if query.rowcount == 0:
             self.con.execute("INSERT INTO words(word, negative, positive) VALUES(?,?,?)",
                              (f, 1 if cat == 'negative' else 0, 1 if cat == 'positive' else 0))
-        """    
-        self.fc.setdefault(f, {})
-        self.fc[f].setdefault(cat, 0)
-        self.fc[f][cat] += 1
-        """
+
+        self.con.commit()
+
     # Increase the count of a category
     def incc(self, cat):
-        try:
-            self.con.execute("UPDATE categories SET count = count + 1 WHERE category = %s" % cat)
-        except sqlite.OperationalError:
+        query = self.con.execute("UPDATE categories SET count = count + 1 WHERE category = '%s'" % cat)
+        if query.rowcount == 0:
             self.con.execute("INSERT INTO categories(category, count) VALUES(?,?)",
                              (cat, 1))
 
-        """
-        self.cc.setdefault(cat, 0)
-        self.cc[cat] += 1
-        """
+
 
     # The number of times a feature has appeared in a category
     def fcount(self, f, cat):
-        try:
-            count = self.con.execute('select %s from words where word=%s' % (cat, f)).fetchone()[0]
-        except sqlite.OperationalError:
-            count = 0
+        count = self.con.execute("select %s from words where word='%s'" % (cat, f)).fetchone()[0]
         return count
-        """
-        if f in self.fc and cat in self.fc[f]:
-            return float(self.fc[f][cat])
-        return 0.0
-        """
+
 
     # The number of items in a category
     def catcount(self, cat):
-        try:
-            count = self.con.execute('select count from categories where category=%s' % cat).fetchone()[0]
-        except sqlite.OperationalError:
-            count = 0
-
+        count = self.con.execute("select count from categories where category='%s'" % cat).fetchone()[0]
         return count
-        """    
-        if cat in self.cc:
-            return float(self.cc[cat])
-        return 0
-        """
+
 
      # The total number of items
     def totalcount(self):
-
         count = 0
         for category in self.categories():
-            count += self.con.execute('select sum(%s) from words' % category).fetchone()[0]
+            count += self.con.execute("select sum(%s) from words" % (category)).fetchone()[0]
         return count
 
 
      # The list of all categories
     def categories(self):
-        categories_list = list(self.con.execute('select category from categories').fetchone())
-        return categories_list
+        categories_list = list(self.con.execute("select category from categories").fetchall())
+
+        return [c[0] for c in categories_list]
 
     def train(self, item, cat):
         features = self.get_features(item)
@@ -96,7 +82,8 @@ class Classifier(object):
     def fprob(self, f, cat):
         if self.catcount(cat) == 0: 
             return 0
-        return self.fcount(f, cat)/self.catcount(cat)
+        a = (self.fcount(f, cat) * 1.0)/self.catcount(cat)
+        return a
 
     def weightedprob(self, f, cat, prf, weight=1.0, ap=0.5):
         # Calculate current probability
@@ -124,7 +111,7 @@ class NaiveBayes(Classifier):
         return p
 
     def prob(self, item, cat):
-        catprob = self.catcount(cat)/self.totalcount( )
+        catprob = (self.catcount(cat)*1.0)/self.totalcount( )
         docprob = self.docprob(item, cat)
         return docprob*catprob
 
@@ -159,7 +146,7 @@ def sampletrain(cl):
     cl.train('the quick rabbit jumps fences', 'positive')
     cl.train('buy pharmaceuticals now', 'negative')
     cl.train('make quick money at the online casino', 'negative')
-    cl.train('the quick brown fox jumps', 'positive')
+    cl.train('the quick brown fox tumama', 'positive')
 
 def getwords(doc):
     splitter = re.compile('\\W*')
