@@ -5,27 +5,99 @@ import csv
 
 
 class Classifier(object):
-    
-    def __init__(self, get_features, dbname, filename=None):
+
+    MAX_CONNECTION_RANGE = 4
+    CONNECTION_INIT_COUNTER = 100
+
+    def __init__(self, dbname, filename=None):
         self.con = sqlite.connect(dbname)
         # Counts of feature/category combinations
         self.fc = dict()
         # Counts of documents in each category
         self.cc = dict()
-        self.get_features = get_features
 
-    def loadData(self, ):
-        with open('asdf.csv') as algo:
-            entrada = csv.reader(algo)
-            for reg in entrada:
-                string, category =  reg[0].split(';')[1],  reg[0].split(';')[3]
+    def loadData(self, csv_name, max=None):
+        #Todo: Embellecer
+        if max:
+            counter = 0
+        with open(csv_name) as db:
+            data = csv.reader(db)
+            for line in data:
+                string, category = line[0].split(';')[1],  line[0].split(';')[3]
                 category = 'positive' if category == '1' else 'negative'
                 self.train(string, category)
+                if max:
+                    counter += 1
+                    if counter > max:
+                        break
 
     def maketables(self):
         self.con.execute('create table words(word, negative, positive)')
         self.con.execute('create table categories(category, count)')
+        self.con.execute('create table connections(connection, negative, positive)')
         self.con.commit()
+
+    @staticmethod
+    def get_words(doc):
+        splitter = re.compile('\\W*')
+        # Split the words by non-alpha characters
+        words = [s.lower() for s in splitter.split(doc)
+                 if 2 < len(s) < 20
+                 and s not in NaiveBayes.NEGLIGIBLE_WORDS]
+        # Return the unique set of words only
+        return dict([(w, 1) for w in words])
+
+    @staticmethod
+    def get_connections(doc, connection_range=1):
+        splitter = re.compile('\\W*')
+        words = [s.lower() for s in splitter.split(doc)
+                 if 2 < len(s) < 20
+                 and s not in NaiveBayes.NEGLIGIBLE_WORDS]
+        end = False
+        connections = list()
+        for i in range(len(words)):
+            connection = ""
+            for j in range(connection_range + 1):
+                try:
+                    connection += words[i + j] + "-"
+                except IndexError:
+                    end = True
+            if end:
+                break
+            connections.append(connection[:-1])
+
+        return dict([(w, 1) for w in words])
+
+    def inc_connection(self, f, cat):
+        query = self.con.execute("UPDATE connections SET %s = %s + 1 WHERE connection = '%s'" % (cat, cat, f))
+        if query.rowcount == 0:
+            self.con.execute("INSERT INTO words(word, negative, positive) VALUES(?,?,?)",
+                             (
+                                f,
+                                self.CONNECTION_INIT_COUNTER + 1 if cat == 'negative' else self.CONNECTION_INIT_COUNTER,
+                                self.CONNECTION_INIT_COUNTER + 1 if cat == 'positive' else self.CONNECTION_INIT_COUNTER
+                             )
+                             )
+
+        self.con.commit()
+
+    def get_connection_probability(self, f, cat):
+        count = self.con.execute("select %s from connections where connection='%s'" % (cat, f)).fetchone()
+        if count is None: # Cuando la palabra aun no esta en la base de datos
+            return 1
+        else:
+            count = count[0]
+        total_count = 0
+        for category in self.categories():
+            count = self.con.execute("select %s from connections where connection='%s'" % (category, f)).fetchone()
+            if count is None: # Cuando la palabra aun no esta en la base de datos
+                count = 0
+            else:
+                count = count[0]
+            total_count += count
+
+        return count*1.0/total_count * 2
+
 
     # Increase the count of a feature/category pair
     def incf(self, f, cat):
@@ -47,8 +119,11 @@ class Classifier(object):
 
     # The number of times a feature has appeared in a category
     def fcount(self, f, cat):
-        count = self.con.execute("select %s from words where word='%s'" % (cat, f)).fetchone()[0]
-        return count
+
+        count = self.con.execute("select %s from words where word='%s'" % (cat, f)).fetchone()
+        if count is None: # Cuando la palabra aun no esta en la base de datos
+            return 0
+        return count[0]
 
 
     # The number of items in a category
@@ -72,10 +147,14 @@ class Classifier(object):
         return [c[0] for c in categories_list]
 
     def train(self, item, cat):
-        features = self.get_features(item)
+        features = self.get_words(item)
         # Increment the count for every feature with this category
         for f in features:
             self.incf(f, cat)
+        for i in range(1, self.MAX_CONNECTION_RANGE):
+            connections = self.get_connections(item, connection_range=i)
+            for connection in connections:
+                self.inc_connection(connection, cat)
         # Increment the count for this category
         self.incc(cat)
 
@@ -96,22 +175,140 @@ class Classifier(object):
         return bp
 
 
-class NaiveBayes(Classifier):
 
-    def __init__(self, get_features, dbname):
-        Classifier.__init__(self, get_features, dbname)
+class NaiveBayes(Classifier):
+    # Lista de palabras(preposiciones y articulos, de las que sudamos)
+    NEGLIGIBLE_WORDS = ['few'
+                        'everi'
+                        'most'
+                        'thatlittl'
+                        'half'
+                        'much'
+                        'the'
+                        'other'
+                        'her'
+                        'my'
+                        'their'
+                        'a'
+                        'an'
+                        'hi'
+                        'neither'
+                        'these'
+                        'all'
+                        'it'
+                        'no'
+                        'thi'
+                        'ani'
+                        'those'
+                        'both'
+                        'least'
+                        'our'
+                        'what'
+                        'each'
+                        'less'
+                        'sever'
+                        'which'
+                        'either'
+                        'mani'
+                        'some'
+                        'whose'
+                        'enough'
+                        'more'
+                        'such'
+                        'your'
+                        'aboard'
+                        'about'
+                        'abov'
+                        'across'
+                        'after'
+                        'against'
+                        'along'
+                        'amid'
+                        'among'
+                        'anti'
+                        'around'
+                        'as'
+                        'at'
+                        'befor'
+                        'behind'
+                        'below'
+                        'beneath'
+                        'besid'
+                        'besid'
+                        'between'
+                        'beyond'
+                        'but'
+                        'by'
+                        'concern'
+                        'consid'
+                        'despit'
+                        'down'
+                        'dure'
+                        'except'
+                        'except'
+                        'exclud'
+                        'follow'
+                        'for'
+                        'from'
+                        'in'
+                        'insid'
+                        'into'
+                        'like'
+                        'minu'
+                        'near'
+                        'of'
+                        'off'
+                        'on'
+                        'onto'
+                        'opposit'
+                        'outsid'
+                        'over'
+                        'past'
+                        'per'
+                        'plu'
+                        'regard'
+                        'round'
+                        'save'
+                        'sinc'
+                        'than'
+                        'through'
+                        'to'
+                        'toward'
+                        'toward'
+                        'under'
+                        'underneath'
+                        'unlik'
+                        'until'
+                        'up'
+                        'upon'
+                        'versu'
+                        'via'
+                        'with'
+                        'within'
+                        'without'
+                        ]
+
+    def __init__(self, dbname):
+        Classifier.__init__(self, dbname)
         self.thresholds = {}
 
     def docprob(self, item, cat):
-        features=self.get_features(item)
+        features = self.get_words(item)
+        connections = list()
+        for i in range(1, self.MAX_CONNECTION_RANGE):
+            connections += self.get_connections(item, connection_range=i)
+
         # Multiply the probabilities of all the features together
         p = 1
         for f in features:
-            p *= self.weightedprob(f, cat, self.fprob)
+            f_prob = self.weightedprob(f, cat, self.fprob)
+            for connection in connections:
+                f_prob *= self.get_connection_probability(connection[0], cat)
+            p *= f_prob
         return p
 
     def prob(self, item, cat):
-        catprob = (self.catcount(cat)*1.0)/self.totalcount( )
+        catprob = (self.catcount(cat)*1.0)/self.totalcount()
         docprob = self.docprob(item, cat)
         return docprob*catprob
 
@@ -123,7 +320,8 @@ class NaiveBayes(Classifier):
             return 1.0
         return self.thresholds[cat]
 
-    def classify(self, item, default=None):
+    def classify(self, item, default=None, get_probs=False):
+        # si get_probs es True devolvera un diccionario de posibilidades, si no solo la mejor
         probs = {}
         # Find the category with the highest probability
         max = 0.0
@@ -138,8 +336,43 @@ class NaiveBayes(Classifier):
                 continue
             if probs[cat]*self.getthreshold(best) > probs[best]:
                 return default
+        self.train(item, best)
+        if get_probs:
+            return probs
         return best
 
+    def train_other(self, item, other_naive_bayes):
+        category = self.classify(item)
+        other_naive_bayes.train(item, category)
+
+
+class SarcasmDetector(object):
+    SARCASM_LIMITER = 50
+
+    def __init__(self, twitter_bot, naive_bayes):
+        self.larry = twitter_bot
+        self.naives = naive_bayes
+        self.thresholds = {}
+
+    def is_sarcastic(self, tweet, user):
+        global_score = self.naives.classify(tweet, get_probs=True)
+        tmpNaiveBayes = NaiveBayes(user + '.bd')
+        tmpNaiveBayes.maketables()
+        for tweet in self.larry.get_tweets_by_user(user):
+            self.naives.train_other(tweet, tmpNaiveBayes)
+
+        local_score = tmpNaiveBayes.classify(tweet, get_probs=True)
+
+        global_percents = {
+            'positive': global_score['positive']/(global_score['positive'] + global_score['negative']),
+            'negative': global_score['negative'] / (global_score['positive'] + global_score['negative'])
+        }
+        local_percents = {
+            'positive': local_score['positive'] / (local_score['positive'] + local_score['negative']),
+            'negative': local_score['negative'] / (local_score['positive'] + local_score['negative'])
+        }
+        return abs(global_percents['positive'] - local_percents['positive']) +\
+               abs(global_percents['negative'] - local_percents['negative'])
 
 def sampletrain(cl):
     cl.train('Nobody owns the water.', 'positive')
@@ -148,9 +381,6 @@ def sampletrain(cl):
     cl.train('make quick money at the online casino', 'negative')
     cl.train('the quick brown fox tumama', 'positive')
 
-def getwords(doc):
-    splitter = re.compile('\\W*')
-    # Split the words by non-alpha characters
-    words = [s.lower() for s in splitter.split(doc) if len(s) > 2 and len(s) < 20]
-    # Return the unique set of words only
-    return dict([(w, 1) for w in words])
+
+
+
