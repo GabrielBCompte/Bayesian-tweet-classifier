@@ -14,9 +14,14 @@ class TwitterBot(object):
     leeros la documentacion -> https://python-twitter.readthedocs.io/en
     """
     def __init__(self, docclass, db_name):
-        self.api = self.connect_api() #para acceder a la api, simplemente conectamos con lo que nos piden
+        self.api = self.connect_api()  #para acceder a la api, simplemente conectamos con lo que nos piden
         self.stemmer = PorterStemmer()
         self.docclass = docclass
+        self.con = sqlite.connect(db_name)
+
+    def make_tables(self):
+        self.con.execute('create table results(entity, negative, positive)')
+        self.con.commit()
 
     def connect_api(self):
         api = twitter.Api(
@@ -48,6 +53,9 @@ class TwitterBot(object):
         for key in results.keys():
             results[key] = results[key] * 1.0 / total_tweets * 100
 
+        for category in ['positive', 'negative']:
+            if category not in results:
+                results[category] = 0
         return results
 
     def get_tweets_by_user(self, name):
@@ -72,18 +80,52 @@ class TwitterBot(object):
         trends = [t.name for t in trends]
         return trends
 
-    def update_trends_data(self):
-
+    def update_trends_data(self, maximum=None):
+        counter = 0
         for trend in self.get_current_trends():
+            if maximum:
+                counter += 1
+                if counter > maximum:
+                    break
             self.save_date(trend, self.rate_trend(trend))
-
 
     def save_date(self, entity, results):
         """Esta funcion guardara en base de datos el score, la idea es tener una base de datos asi:
             |Zone|Score|Analized Tweets|"""
-        print(entity)
-        print(results)
-        print("----------")
+        positive = results['positive']/100 * results['total']
+        negative = results['negative']/100 * results['total']
 
-    def get_data(self, entity):
-        pass
+        query = self.con.execute("UPDATE results SET positive = positive + %d WHERE entity = '%s'" % (positive, entity))
+        if query.rowcount == 0:
+            self.con.execute("INSERT INTO results(entity, negative, positive) VALUES(?,?,?)",
+                             (entity, negative, positive))
+        else:
+            self.con.execute("UPDATE results SET negative = negative + %d WHERE entity = '%s'" % (negative, entity))
+
+        self.con.commit()
+
+    def get_entity_data(self, entity):
+        # Devuelve un diccionario con el nombre de la entidad y el porcentaje de positivos
+        positive = self.con.execute("select positive from results where entity='%s'" % entity).fetchone()
+        if positive is None:  # Cuando la palabra aun no esta en la base de datos
+            return "No data for this entity"
+        positive = positive[0]
+        negative = self.con.execute("select negative from results where entity='%s'" % entity).fetchone()[0]
+
+        return {
+            entity: {
+                'positive': (positive * 1.0 / (positive + negative)) * 100,
+                'negative': (negative * 1.0 / (positive + negative)) * 100
+            },
+        }
+
+    def get_all_entities(self):
+        entities_list = self.con.execute("select entity from results").fetchall()
+        return entities_list
+
+    def get_all_data(self):
+        data = {}
+        for entity in self.get_all_entities():
+            entity_data = self.get_entity_data(entity)
+            data.update(entity_data)
+        return data

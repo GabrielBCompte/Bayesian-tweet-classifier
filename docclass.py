@@ -1,5 +1,4 @@
 import re
-import math
 from sqlite3 import dbapi2 as sqlite
 import csv
 
@@ -11,23 +10,24 @@ class Classifier(object):
 
     def __init__(self, db_name):
         self.con = sqlite.connect(db_name)
-        # Counts of feature/category combinations
         self.fc = dict()
-        # Counts of documents in each category
         self.cc = dict()
 
-    def loadData(self, csv_name, max=None):
-        #Todo: Embellecer
+    def load_data(self, csv_name, maximum=None, start_line=None):
         counter = 0
         with open(csv_name) as db:
             data = csv.reader(db)
             for line in data:
+                if start_line:
+                    if line[0].split(';')[0] < start_line:
+                        continue
                 string, category = line[0].split(';')[1],  line[0].split(';')[3]
                 category = 'positive' if category == '1' else 'negative'
                 self.train(string, category)
-                if max:
+                if maximum:
                     counter += 1
-                    if counter > max:
+                    print('%d/%d' % (counter, maximum))
+                    if counter > maximum:
                         break
 
     def make_tables(self):
@@ -75,8 +75,6 @@ class Classifier(object):
 
         return dict([(w, 1) for w in words])
 
-
-
     def inc_connection(self, f, cat):
         query = self.con.execute("UPDATE connections SET %s = %s + 1 WHERE connection = '%s'" % (cat, cat, f))
         if query.rowcount == 0:
@@ -92,21 +90,20 @@ class Classifier(object):
 
     def get_connection_probability(self, f, cat):
         count = self.con.execute("select %s from connections where connection='%s'" % (cat, f)).fetchone()
-        if count is None: # Cuando la palabra aun no esta en la base de datos
+        if count is None:  # Cuando la palabra aun no esta en la base de datos
             return 1
         else:
             count = count[0]
         total_count = 0
         for category in self.categories():
             count = self.con.execute("select %s from connections where connection='%s'" % (category, f)).fetchone()
-            if count is None: # Cuando la palabra aun no esta en la base de datos
+            if count is None:  # Cuando la palabra aun no esta en la base de datos
                 count = 0
             else:
                 count = count[0]
             total_count += count
 
         return count*1.0/total_count * 2
-
 
     # Increase the count of a feature/category pair
     def incf(self, f, cat):
@@ -124,32 +121,27 @@ class Classifier(object):
             self.con.execute("INSERT INTO categories(category, count) VALUES(?,?)",
                              (cat, 1))
 
-
-
     # The number of times a feature has appeared in a category
     def fcount(self, f, cat):
 
         count = self.con.execute("select %s from words where word='%s'" % (cat, f)).fetchone()
-        if count is None: # Cuando la palabra aun no esta en la base de datos
+        if count is None:  # Cuando la palabra aun no esta en la base de datos
             return 0
         return count[0]
-
 
     # The number of items in a category
     def catcount(self, cat):
         count = self.con.execute("select count from categories where category='%s'" % cat).fetchone()[0]
         return count
 
-
-     # The total number of items
+    # The total number of items
     def totalcount(self):
         count = 0
         for category in self.categories():
-            count += self.con.execute("select sum(%s) from words" % (category)).fetchone()[0]
+            count += self.con.execute("select sum(%s) from words" % category).fetchone()[0]
         return count
 
-
-     # The list of all categories
+    # The list of all categories
     def categories(self):
         categories_list = list(self.con.execute("select category from categories").fetchall())
 
@@ -182,7 +174,6 @@ class Classifier(object):
         # Calculate the weighted average
         bp = ((weight*ap)+(totals*basicprob))/(weight+totals)
         return bp
-
 
 
 class NaiveBayes(Classifier):
@@ -333,11 +324,11 @@ class NaiveBayes(Classifier):
         # si get_probs es True devolvera un diccionario de posibilidades, si no solo la mejor
         probs = {}
         # Find the category with the highest probability
-        max = 0.0
+        maximum = 0.0
         for cat in self.categories():
             probs[cat] = self.prob(item, cat)
-            if probs[cat] > max:
-                max = probs[cat]
+            if probs[cat] > maximum:
+                maximum = probs[cat]
                 best = cat
         # Make sure the probability exceeds threshold*next best
         for cat in probs:
@@ -349,6 +340,30 @@ class NaiveBayes(Classifier):
         if get_probs:
             return probs
         return best
+
+    def train_data(self, csv_name, maximum=None, start_line=None):
+        counter = 0
+        success = 0
+        error = 0
+        with open(csv_name) as db:
+            data = csv.reader(db)
+            for line in data:
+                if start_line:
+                    if line[0].split(';')[0] < start_line:
+                        continue
+                string, category = line[0].split(';')[1],  line[0].split(';')[3]
+                category = 'positive' if category == '1' else 'negative'
+                predicted_category = self.classify(string)
+                if predicted_category == category:
+                    success += 1
+                else:
+                    error += 1
+                if maximum:
+                    counter += 1
+                    print('%d/%d' % (counter, maximum))
+                    if counter > maximum:
+                        break
+        return success*1.0/(success+error)
 
     def train_other(self, item, other_naive_bayes):
         category = self.classify(item)
@@ -380,17 +395,7 @@ class SarcasmDetector(object):
             'positive': local_score['positive'] / (local_score['positive'] + local_score['negative']),
             'negative': local_score['negative'] / (local_score['positive'] + local_score['negative'])
         }
-        return abs(global_percents['positive'] - local_percents['positive']) +\
-               abs(global_percents['negative'] - local_percents['negative'])
-
-
-def sampletrain(cl):
-    cl.train('Nobody owns the water.', 'positive')
-    cl.train('the quick rabbit jumps fences', 'positive')
-    cl.train('buy pharmaceuticals now', 'negative')
-    cl.train('make quick money at the online casino', 'negative')
-    cl.train('the quick brown fox tumama', 'positive')
-
-
-
-
+        return (
+                + abs(global_percents['positive'] - local_percents['positive'])
+                + abs(global_percents['negative'] - local_percents['negative'])
+            )
