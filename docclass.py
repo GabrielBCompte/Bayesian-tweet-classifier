@@ -9,8 +9,8 @@ class Classifier(object):
     MAX_CONNECTION_RANGE = 4
     CONNECTION_INIT_COUNTER = 100
 
-    def __init__(self, dbname, filename=None):
-        self.con = sqlite.connect(dbname)
+    def __init__(self, db_name):
+        self.con = sqlite.connect(db_name)
         # Counts of feature/category combinations
         self.fc = dict()
         # Counts of documents in each category
@@ -18,8 +18,7 @@ class Classifier(object):
 
     def loadData(self, csv_name, max=None):
         #Todo: Embellecer
-        if max:
-            counter = 0
+        counter = 0
         with open(csv_name) as db:
             data = csv.reader(db)
             for line in data:
@@ -31,11 +30,19 @@ class Classifier(object):
                     if counter > max:
                         break
 
-    def maketables(self):
+    def make_tables(self):
         self.con.execute('create table words(word, negative, positive)')
         self.con.execute('create table categories(category, count)')
         self.con.execute('create table connections(connection, negative, positive)')
         self.con.commit()
+
+    @staticmethod
+    def check_word(word):
+        if word in NaiveBayes.NEGLIGIBLE_WORDS:
+            return False
+        if word[0] in ['@', '#']:
+            return False
+        return True
 
     @staticmethod
     def get_words(doc):
@@ -43,7 +50,7 @@ class Classifier(object):
         # Split the words by non-alpha characters
         words = [s.lower() for s in splitter.split(doc)
                  if 2 < len(s) < 20
-                 and s not in NaiveBayes.NEGLIGIBLE_WORDS]
+                 and Classifier.check_word(s)]
         # Return the unique set of words only
         return dict([(w, 1) for w in words])
 
@@ -52,7 +59,7 @@ class Classifier(object):
         splitter = re.compile('\\W*')
         words = [s.lower() for s in splitter.split(doc)
                  if 2 < len(s) < 20
-                 and s not in NaiveBayes.NEGLIGIBLE_WORDS]
+                 and Classifier.check_word(s.lower())]
         end = False
         connections = list()
         for i in range(len(words)):
@@ -67,6 +74,8 @@ class Classifier(object):
             connections.append(connection[:-1])
 
         return dict([(w, 1) for w in words])
+
+
 
     def inc_connection(self, f, cat):
         query = self.con.execute("UPDATE connections SET %s = %s + 1 WHERE connection = '%s'" % (cat, cat, f))
@@ -356,12 +365,12 @@ class SarcasmDetector(object):
 
     def is_sarcastic(self, tweet, user):
         global_score = self.naives.classify(tweet, get_probs=True)
-        tmpNaiveBayes = NaiveBayes(user + '.bd')
-        tmpNaiveBayes.maketables()
+        tmp_naive_bayes = NaiveBayes(user + '.bd')
+        tmp_naive_bayes.make_tables()
         for tweet in self.larry.get_tweets_by_user(user):
-            self.naives.train_other(tweet, tmpNaiveBayes)
+            self.naives.train_other(tweet, tmp_naive_bayes)
 
-        local_score = tmpNaiveBayes.classify(tweet, get_probs=True)
+        local_score = tmp_naive_bayes.classify(tweet, get_probs=True)
 
         global_percents = {
             'positive': global_score['positive']/(global_score['positive'] + global_score['negative']),
@@ -373,6 +382,7 @@ class SarcasmDetector(object):
         }
         return abs(global_percents['positive'] - local_percents['positive']) +\
                abs(global_percents['negative'] - local_percents['negative'])
+
 
 def sampletrain(cl):
     cl.train('Nobody owns the water.', 'positive')
