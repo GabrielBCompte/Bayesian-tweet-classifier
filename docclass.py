@@ -168,16 +168,13 @@ class Classifier(object):
         :param word: (string) Palabra a checkear
         :return: (boolean) True si la palabra debe ser tenida en cuenta, False si no
         """
-        if 2 < len(word) < 20:
+
+        if not len(word) > 2 and len(word) < 20:
             return False
-        print(word)
         if word in Classifier.NEGLIGIBLE_WORDS:
             return False
         # TODO: Identificar y fijar error para poder eliminar el try-except
-        try:
-            if word[0] in ['@', '#']:
-                return False
-        except IndexError:
+        if word[0] in ['@', '#']:
             return False
         return True
 
@@ -193,75 +190,6 @@ class Classifier(object):
                  if Classifier.check_word(s.lower())]
 
         return dict([(w, 1) for w in words])
-
-    @staticmethod
-    def get_connections(doc, connection_range=1):
-        """
-        Divide un documento en las connexiones entre sus palabras
-        :param doc: (string) Documento a dividir
-        :param connection_range: (int) El rango en que crea las connexiones
-        Ej: Si el rango es 1 juntara las palabras de 2 en 2, si el rango es 2 de 3 en 3, etc...
-        :return: (dict) Diccionario de las connexiones unicas
-        """
-
-        splitter = re.compile('\\W*')
-        words = [s.lower() for s in splitter.split(doc)
-                 if Classifier.check_word(s.lower())]
-        end = False
-        connections = list()
-        for i in range(len(words)):
-            connection = ""
-            for j in range(connection_range + 1):
-                try:
-                    connection += words[i + j] + "-"  # "-" entre palabras para facilitar su lectura
-                except IndexError:
-                    end = True
-            if end:
-                break
-            connections.append(connection[:-1])
-
-        return dict([(w, 1) for w in words])
-
-    def inc_connection(self, f, cat):
-        """
-        Incrementa el valor de una categoria determinada de una connexion
-        :param f: (string) Connexion 
-        :param cat: (string) Categoria a incrementar
-        """
-        query = self.con.execute("UPDATE connections SET %s = %s + 1 WHERE connection = '%s'" % (cat, cat, f))
-        if query.rowcount == 0:  # Si la connexion no esta en base de datos la guardamos
-            self.con.execute("INSERT INTO connections(connection, negative, positive) VALUES(?,?,?)",
-                             (
-                                f,
-                                self.CONNECTION_INIT_COUNTER + 1 if cat == 'negative' else self.CONNECTION_INIT_COUNTER,
-                                self.CONNECTION_INIT_COUNTER + 1 if cat == 'positive' else self.CONNECTION_INIT_COUNTER
-                             )
-                             )
-
-        self.con.commit()
-
-    def get_connection_probability(self, f, cat):
-        """
-        La proablidad de que una connexion sea de una determinada categoria
-        :param f: (string) Connexion 
-        :param cat: (string) Categoria de la qual debe sacar-se la proabilidad
-        :return: (float) Proablidad, puede ir del 0 al 2 ya que multiplicara la proablidad de la palabra
-        """
-        count = self.con.execute("select %s from connections where connection='%s'" % (cat, f)).fetchone()
-        if count is None:  # Cuando la connexion aun no esta en la base de datos
-            return 1
-        else:
-            count = count[0]
-        total_count = 0
-        for category in self.categories():
-            count = self.con.execute("select %s from connections where connection='%s'" % (category, f)).fetchone()
-            if count is None:  # Cuando la connexion aun no esta en la base de datos
-                count = 0
-            else:
-                count = count[0]
-            total_count += count
-
-        return count*1.0/total_count * 2
 
     def incf(self, f, cat):
         """
@@ -332,14 +260,8 @@ class Classifier(object):
         :param cat: (string) Categoria a la que pertenece
         """
         features = self.get_words(item)
-        # Increment the count for every feature with this category
         for f in features:
             self.incf(f, cat)
-        for i in range(1, self.MAX_CONNECTION_RANGE):
-            connections = self.get_connections(item, connection_range=i)
-            for connection in connections:
-                self.inc_connection(connection, cat)
-        # Increment the count for this category
         self.incc(cat)
 
     def fprob(self, f, cat):
@@ -392,17 +314,11 @@ class NaiveBayes(Classifier):
         :return: (float) Proablidad sobre 1
         """
         features = self.get_words(item)
-        connections = list()
-        for i in range(1, self.MAX_CONNECTION_RANGE):
-            connections += self.get_connections(item, connection_range=i)
-
         p = 1
         for f in features:
             f_prob = self.weightedprob(f, cat, self.fprob)
-            for connection in connections:
-                f_prob *= self.get_connection_probability(connection[0], cat)
             p *= f_prob
-        return p
+        return p * 1000
 
     def prob(self, item, cat):
         """
@@ -416,36 +332,39 @@ class NaiveBayes(Classifier):
         docprob = self.docprob(item, cat)
         return docprob*catprob
 
-    def setthreshold(self, cat, t):
-        self.thresholds[cat] = t
-
-    def getthreshold(self, cat):
-        if cat not in self.thresholds:
-            return 1.0
-        return self.thresholds[cat]
-
-    def classify(self, item, default=None, get_probs=False):
-        # si get_probs es True devolvera un diccionario de posibilidades, si no solo la mejor
+    def classify(self, item, get_probs=False):
+        """
+        Clasifica un item en una categoria
+        :param item: (string) tweet a calificar
+        :param get_probs: Si True en lugar de devolver la categoria se devolvera un diccionario con valores
+        :return: (string) Categoria a la que pertenece el item
+        """
+        
         probs = {}
-        # Find the category with the highest probability
         maximum = 0.0
+        best = 0.0
         for cat in self.categories():
             probs[cat] = self.prob(item, cat)
             if probs[cat] > maximum:
                 maximum = probs[cat]
                 best = cat
-        # Make sure the probability exceeds threshold*next best
         for cat in probs:
             if cat == best:
                 continue
-            if probs[cat]*self.getthreshold(best) > probs[best]:
-                return default
-        self.train(item, best)
         if get_probs:
             return probs
+        print("%s > %s" % (item, cat))
+        # self.train(item, best)
         return best
 
     def train_data(self, csv_name, maximum=None, start_line=None):
+        """
+         Carga los datos de un csv y examina su porcentaje de acierto
+        :param csv_name: (string) El nombre del csv
+        :param maximum: (int) El maximo de lineas en default se leeran todas
+        :param start_line: (int) La linia inicial, el default es 0
+        :return: (float) porcentaje de acierto sobre 1
+        """
         counter = 0
         success = 0
         error = 0
@@ -456,7 +375,7 @@ class NaiveBayes(Classifier):
                     if line[0].split(';')[0] < start_line:
                         continue
                 string, category = line[0].split(';')[1],  line[0].split(';')[3]
-                category = 'positive' if category == '1' else 'negative'
+                category = 'positive' if category == '1' else category = 'negative'
                 predicted_category = self.classify(string)
                 if predicted_category == category:
                     success += 1
@@ -469,37 +388,3 @@ class NaiveBayes(Classifier):
                         break
         return success*1.0/(success+error)
 
-    def train_other(self, item, other_naive_bayes):
-        category = self.classify(item)
-        other_naive_bayes.train(item, category)
-
-
-class SarcasmDetector(object):
-    SARCASM_LIMITER = 50
-
-    def __init__(self, twitter_bot, naive_bayes):
-        self.larry = twitter_bot
-        self.naives = naive_bayes
-        self.thresholds = {}
-
-    def is_sarcastic(self, tweet, user):
-        global_score = self.naives.classify(tweet, get_probs=True)
-        tmp_naive_bayes = NaiveBayes(user + '.bd')
-        tmp_naive_bayes.make_tables()
-        for tweet in self.larry.get_tweets_by_user(user):
-            self.naives.train_other(tweet, tmp_naive_bayes)
-
-        local_score = tmp_naive_bayes.classify(tweet, get_probs=True)
-
-        global_percents = {
-            'positive': global_score['positive']/(global_score['positive'] + global_score['negative']),
-            'negative': global_score['negative'] / (global_score['positive'] + global_score['negative'])
-        }
-        local_percents = {
-            'positive': local_score['positive'] / (local_score['positive'] + local_score['negative']),
-            'negative': local_score['negative'] / (local_score['positive'] + local_score['negative'])
-        }
-        return (
-                + abs(global_percents['positive'] - local_percents['positive'])
-                + abs(global_percents['negative'] - local_percents['negative'])
-            )
