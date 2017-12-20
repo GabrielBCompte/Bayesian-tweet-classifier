@@ -375,7 +375,7 @@ class NaiveBayes(Classifier):
                     if line[0].split(';')[0] < start_line:
                         continue
                 string, category = line[0].split(';')[1],  line[0].split(';')[3]
-                category = 'positive' if category == '1' else category = 'negative'
+                category = 'positive' if category == '1' else 'negative'
                 predicted_category = self.classify(string)
                 if predicted_category == category:
                     success += 1
