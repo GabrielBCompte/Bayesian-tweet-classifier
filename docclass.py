@@ -170,9 +170,14 @@ class Classifier(object):
         """
         if 2 < len(word) < 20:
             return False
+        print(word)
         if word in Classifier.NEGLIGIBLE_WORDS:
             return False
-        if word[0] in ['@', '#']:
+        # TODO: Identificar y fijar error para poder eliminar el try-except
+        try:
+            if word[0] in ['@', '#']:
+                return False
+        except IndexError:
             return False
         return True
 
@@ -225,7 +230,7 @@ class Classifier(object):
         """
         query = self.con.execute("UPDATE connections SET %s = %s + 1 WHERE connection = '%s'" % (cat, cat, f))
         if query.rowcount == 0:  # Si la connexion no esta en base de datos la guardamos
-            self.con.execute("INSERT INTO connections(word, negative, positive) VALUES(?,?,?)",
+            self.con.execute("INSERT INTO connections(connection, negative, positive) VALUES(?,?,?)",
                              (
                                 f,
                                 self.CONNECTION_INIT_COUNTER + 1 if cat == 'negative' else self.CONNECTION_INIT_COUNTER,
@@ -368,20 +373,29 @@ class Classifier(object):
 
 class NaiveBayes(Classifier):
     """
-    Classe NaiveBayes, superclasse de Classifier 
+    Clase NaiveBayes, superclase de Classifier, implementa los metodos de Bayes a esta subclase 
     """
 
     def __init__(self, dbname):
+        """
+        Inicia la subclasse Classifier con su base de datos i genera un diccionario de umbrales vacio
+        :param dbname: (string) Nombre de las base de datos
+        """
         Classifier.__init__(self, dbname)
         self.thresholds = {}
 
     def docprob(self, item, cat):
+        """
+        Calcula la proablidad de que un documento pertenezca a una categoria 
+        :param item: (string) Documento a analizar
+        :param cat: (string) Categoria
+        :return: (float) Proablidad sobre 1
+        """
         features = self.get_words(item)
         connections = list()
         for i in range(1, self.MAX_CONNECTION_RANGE):
             connections += self.get_connections(item, connection_range=i)
 
-        # Multiply the probabilities of all the features together
         p = 1
         for f in features:
             f_prob = self.weightedprob(f, cat, self.fprob)
@@ -391,6 +405,13 @@ class NaiveBayes(Classifier):
         return p
 
     def prob(self, item, cat):
+        """
+        Devuelve la proablidad de que un documento pertenezca a una categoria
+        multiplicado por la proablidad de esa categoria
+        :param item: (string) Documento a analizar
+        :param cat: (string) Categoria
+        :return: (float) Proablidad sobre 1
+        """
         catprob = (self.catcount(cat)*1.0)/self.totalcount()
         docprob = self.docprob(item, cat)
         return docprob*catprob

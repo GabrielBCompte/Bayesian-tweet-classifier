@@ -5,4 +5,4 @@ if __name__ == '__main__':
     from twitterbot import TwitterBot
     dc = docclass.NaiveBayes('test2.db')
     larry = TwitterBot(docclass=dc, db_name='twitter3.db')
-    print(larry.get_all_data())
+    larry.update_trends_data(maximum=1)
