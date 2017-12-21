@@ -240,10 +240,10 @@ class Classifier(object):
         """
         :return: (int) Numero total de items guardados
         """
-        count = 0
-        for category in self.categories():
-            count += self.con.execute("select sum(%s) from words" % category).fetchone()[0]
-        return count
+        res = self.con.execute('select sum(count) from categories').fetchone()
+        if res is None:
+            return 0
+        return res[0]
 
     def categories(self):
         """
@@ -283,8 +283,8 @@ class Classifier(object):
         :param f: (string) Palabra
         :param cat: (string) Categoria
         :param prf: (method) Metodo para calcular la proablidad basica
-        :param weight: (float) TODO
-        :param ap: (float) TODO:
+        :param weight: (float) peso que se le da al balance
+        :param ap: (float) proablidad por defecto
         :return: (float) Proablidad balanceada sobre 1
         """
         basicprob = prf(f, cat)
@@ -304,7 +304,6 @@ class NaiveBayes(Classifier):
         :param dbname: (string) Nombre de las base de datos
         """
         Classifier.__init__(self, dbname)
-        self.thresholds = {}
 
     def docprob(self, item, cat):
         """
@@ -330,6 +329,8 @@ class NaiveBayes(Classifier):
         """
         catprob = (self.catcount(cat)*1.0)/self.totalcount()
         docprob = self.docprob(item, cat)
+        total_docprob = sum([self.docprob(item, c) for c in self.categories()])
+        docprob = self.docprob(item, cat) / total_docprob
         return docprob*catprob
 
     def classify(self, item, get_probs=False):
@@ -353,7 +354,6 @@ class NaiveBayes(Classifier):
                 continue
         if get_probs:
             return probs
-        print("%s > %s" % (item, cat))
         # self.train(item, best)
         return best
 
