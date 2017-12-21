@@ -191,6 +191,8 @@ class TwitterBot(object):
 		lista todas las entidades de la base de datos
 		:return: (list) String list de las entidades
 		"""
+		if "'" in entity:
+            		return "No data for this entity"
 		entities_list = self.con.execute("select entity from results").fetchall()
 		return entities_list
 
